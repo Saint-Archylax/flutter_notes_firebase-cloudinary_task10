@@ -60,10 +60,84 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
+  //Ask for an email, then let Firebase send a password reset link.
+  Future<void> doForgotPassword() async {
+    String resetEmail = emailCtrl.text.trim();
+
+    final email = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Forgot Password'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Enter your email to receive a password reset link.'),
+            const SizedBox(height: 12),
+            TextFormField(
+              initialValue: resetEmail,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (value) => resetEmail = value.trim(),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, resetEmail),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || email == null) return;
+
+    if (email.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter your email address.')),
+      );
+      return;
+    }
+
+    setState(() => busy = true);
+    try {
+      await FirebaseAuth.instance.sendPasswordResetEmail(email: email);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('If this email has an account, check your inbox for the reset link.'),
+          ),
+        );
+      }
+    } on FirebaseAuthException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message ?? error.code)),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not send reset email: $error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Login')),
+      appBar: AppBar(title: const Text('Firebase Auth - Ymbol')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(20),
@@ -91,7 +165,14 @@ class _LoginPageState extends State<LoginPage> {
                   border: OutlineInputBorder(),
                 ),
               ),
-              const SizedBox(height: 20),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: busy ? null : doForgotPassword,
+                  child: const Text('Forgot Password?'),
+                ),
+              ),
+              const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
