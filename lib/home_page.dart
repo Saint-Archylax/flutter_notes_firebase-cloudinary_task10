@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'crud_service.dart';
@@ -30,12 +32,16 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  //Same dialog for adding and editing an item.
+  //Gamit ang parehong dialog para sa Add at Edit Item.
   void openItemDialog({QueryDocumentSnapshot<Map<String, dynamic>>? item}) {
     final bool isEditing = item != null;
     final data = item?.data();
     nameCtrl.text = data?['name']?.toString() ?? '';
     qtyCtrl.text = data?['quantity']?.toString() ?? '';
+
+    File? selectedImageFile;
+    String? selectedImageUrl = data?['image_url']?.toString();
+    bool uploading = false;
     bool saving = false;
 
     showDialog<void>(
@@ -43,34 +49,88 @@ class _HomePageState extends State<HomePage> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => AlertDialog(
           title: Text(isEditing ? 'Edit Item' : 'Add Item'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Name',
-                  border: OutlineInputBorder(),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Name',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: qtyCtrl,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: 'Quantity',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: qtyCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Quantity',
+                    border: OutlineInputBorder(),
+                  ),
                 ),
-              ),
-            ],
+                const SizedBox(height: 10),
+                if (selectedImageFile != null)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(
+                      selectedImageFile!,
+                      width: 120,
+                      height: 120,
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                else if (selectedImageUrl != null && selectedImageUrl!.isNotEmpty)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      selectedImageUrl!,
+                      width: 120,
+                      height: 120,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) =>
+                          const Icon(Icons.broken_image, size: 50),
+                    ),
+                  ),
+                const SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: uploading || saving
+                      ? null
+                      : () async {
+                          setDialogState(() => uploading = true);
+                          try {
+                            //I-upload agad ang napiling picture, tulad sa video.
+                            final pickedImage =
+                                await service.pickImageForAddItem();
+                            if (pickedImage != null && dialogContext.mounted) {
+                              setDialogState(() {
+                                selectedImageFile = pickedImage.file;
+                                selectedImageUrl = pickedImage.url;
+                              });
+                            }
+                          } catch (error) {
+                            showError(error);
+                          } finally {
+                            if (dialogContext.mounted) {
+                              setDialogState(() => uploading = false);
+                            }
+                          }
+                        },
+                  icon: const Icon(Icons.upload_file),
+                  label: Text(uploading ? 'Uploading...' : 'Upload Image'),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
-              onPressed: saving ? null : () => Navigator.pop(dialogContext),
+              onPressed: uploading || saving
+                  ? null
+                  : () => Navigator.pop(dialogContext),
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: saving
+              onPressed: uploading || saving
                   ? null
                   : () async {
                       final name = nameCtrl.text.trim();
@@ -78,17 +138,29 @@ class _HomePageState extends State<HomePage> {
                       if (name.isEmpty || quantity == null || quantity <= 0) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text('Enter a name and a quantity greater than zero.'),
+                            content: Text(
+                              'Enter a name and a quantity greater than zero.',
+                            ),
                           ),
                         );
                         return;
                       }
+
                       setDialogState(() => saving = true);
                       try {
                         if (isEditing) {
-                          await service.updateItem(item.id, name, quantity);
+                          await service.updateItem(
+                            item.id,
+                            name,
+                            quantity,
+                            imageUrl: selectedImageUrl,
+                          );
                         } else {
-                          await service.addItem(name, quantity);
+                          await service.addItem(
+                            name,
+                            quantity,
+                            imageUrl: selectedImageUrl ?? '',
+                          );
                         }
                         if (dialogContext.mounted) Navigator.pop(dialogContext);
                       } catch (error) {
@@ -106,7 +178,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  //Ask for confirmation before deleting.
+  //Magtanong muna bago mag-delete ng item.
   void confirmDelete(String id) {
     showDialog<void>(
       context: context,
@@ -134,7 +206,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  //Update the heart and save the result directly in Firebase.
+  //I-update ang heart status at i-save sa Firebase.
   Future<void> toggleFavorite(String id, bool isFavorite) async {
     try {
       await service.setFavorite(id, !isFavorite);
@@ -153,7 +225,7 @@ class _HomePageState extends State<HomePage> {
         backgroundColor: Colors.teal,
         foregroundColor: Colors.white,
         actions: [
-          //Top heart: switch between all items and favorite items.
+          //show Favorites lang pag naka select ang top heart.
           IconButton(
             tooltip: showFavoritesOnly ? 'Show all items' : 'Show favorites',
             icon: Icon(
@@ -163,7 +235,6 @@ class _HomePageState extends State<HomePage> {
               setState(() => showFavoritesOnly = !showFavoritesOnly);
             },
           ),
-          //Keep the Phase 2 logout button.
           IconButton(
             tooltip: 'Logout',
             icon: const Icon(Icons.logout),
@@ -193,7 +264,7 @@ class _HomePageState extends State<HomePage> {
             return const Center(child: CircularProgressIndicator());
           }
 
-          //Older Firestore documents may not have isFavorite yet.
+          //no isFavorite field
           final docs = snapshot.data!.docs.where((doc) {
             return !showFavoritesOnly || doc.data()['isFavorite'] == true;
           }).toList();
@@ -222,17 +293,31 @@ class _HomePageState extends State<HomePage> {
               final item = docs[index];
               final data = item.data();
               final bool isFavorite = data['isFavorite'] == true;
+              final String imageUrl = data['image_url']?.toString() ?? '';
 
               return Card(
                 margin: const EdgeInsets.symmetric(vertical: 6),
                 color: const Color(0xFFF6F2F8),
                 child: ListTile(
+                  //show pics if url
+                  leading: imageUrl.isEmpty
+                      ? null
+                      : ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.network(
+                            imageUrl,
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) =>
+                                const Icon(Icons.broken_image, size: 45),
+                          ),
+                        ),
                   title: Text(data['name']?.toString() ?? 'Unnamed'),
                   subtitle: Text('Quantity: ${data['quantity'] ?? 0}'),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      //Small heart: mark or unmark this item as favorite.
                       IconButton(
                         tooltip: isFavorite ? 'Remove favorite' : 'Add favorite',
                         icon: Icon(
